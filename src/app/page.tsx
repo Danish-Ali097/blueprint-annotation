@@ -27,6 +27,7 @@ import type { BlueprintFile, BlueprintPage, Point } from "@/types/canvas";
 
 const STAGE_WIDTH = 1120;
 const STAGE_HEIGHT = 680;
+const RIGHT_COLUMN_WIDTH = STAGE_WIDTH + 32;
 const EMPTY_ANNOTATION_IDS: string[] = [];
 const PDF_WORKER_CDN = "https://unpkg.com/pdfjs-dist@5.5.207/legacy/build/pdf.worker.min.mjs";
 
@@ -54,6 +55,11 @@ type CalibrationLine = {
   unit: string;
 };
 
+type CursorPosition = {
+  x: number;
+  y: number;
+};
+
 function isPdfAsset(name: string, mimeType?: string) {
   return mimeType === "application/pdf" || name.toLowerCase().endsWith(".pdf");
 }
@@ -69,6 +75,21 @@ function getPolylineLength(points: Point[]) {
   }, 0);
 }
 
+function getPolygonArea(points: Point[]) {
+  if (points.length < 3) {
+    return 0;
+  }
+
+  let area = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    area += current.x * next.y - next.x * current.y;
+  }
+
+  return Math.abs(area) / 2;
+}
+
 function toWorldPoint(stage: Konva.Stage, scale: number, x: number, y: number) {
   const pointer = stage.getPointerPosition();
   if (!pointer) {
@@ -79,6 +100,15 @@ function toWorldPoint(stage: Konva.Stage, scale: number, x: number, y: number) {
     x: (pointer.x - x) / scale,
     y: (pointer.y - y) / scale,
   };
+}
+
+function isTextEntryTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || target.isContentEditable;
 }
 
 async function extractImagePage(file: File): Promise<UploadedPage> {
@@ -168,8 +198,10 @@ export default function Home() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingAnnotations, setIsLoadingAnnotations] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [isDrawingArea, setIsDrawingArea] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [draftPoints, setDraftPoints] = useState<Point[]>([]);
+  const [areaDraftPoints, setAreaDraftPoints] = useState<Point[]>([]);
   const [calibrationDraftPoints, setCalibrationDraftPoints] = useState<Point[]>([]);
   const [calibrationRealDistance, setCalibrationRealDistance] = useState("1");
   const [calibrationUnit, setCalibrationUnit] = useState("m");
@@ -181,6 +213,7 @@ export default function Home() {
   const [isLoadingRecentFiles, setIsLoadingRecentFiles] = useState(false);
   const [pdfDataByFileId, setPdfDataByFileId] = useState<Record<string, ArrayBuffer>>({});
   const [isRenderingPageImageById, setIsRenderingPageImageById] = useState<Record<string, boolean>>({});
+  const [cursorPosition, setCursorPosition] = useState<CursorPosition | null>(null);
 
   const pages = useCanvasStore((state) => state.pages);
   const activePageId = useCanvasStore((state) => state.activePageId);
@@ -435,8 +468,10 @@ export default function Home() {
         setTransform({ x: 0, y: 0, scale: 1 });
       }
       setDraftPoints([]);
+      setAreaDraftPoints([]);
       setCalibrationDraftPoints([]);
       setIsDrawing(false);
+      setIsDrawingArea(false);
       setIsCalibrating(false);
       await loadRecentUploads();
     } catch (error) {
@@ -461,8 +496,10 @@ export default function Home() {
       setTransform({ x: 0, y: 0, scale: 1 });
     }
     setDraftPoints([]);
+    setAreaDraftPoints([]);
     setCalibrationDraftPoints([]);
     setIsDrawing(false);
+    setIsDrawingArea(false);
     setIsCalibrating(false);
 
     if (dbPages.length === 0) {
@@ -528,7 +565,7 @@ export default function Home() {
   }
 
   function handleStageMouseDown(event: Konva.KonvaEventObject<MouseEvent>) {
-    if ((!isDrawing && !isCalibrating) || !activePageId) {
+    if ((!isDrawing && !isDrawingArea && !isCalibrating) || !activePageId) {
       return;
     }
 
@@ -556,7 +593,26 @@ export default function Home() {
       return;
     }
 
+    if (isDrawingArea) {
+      setAreaDraftPoints((points) => [...points, worldPoint]);
+      return;
+    }
+
     setDraftPoints((points) => [...points, worldPoint]);
+  }
+
+  function handleStageMouseMove(event: Konva.KonvaEventObject<MouseEvent>) {
+    const stage = event.target.getStage();
+    if (!stage) {
+      return;
+    }
+
+    const worldPoint = toWorldPoint(stage, transform.scale, transform.x, transform.y);
+    if (!worldPoint) {
+      return;
+    }
+
+    setCursorPosition(worldPoint);
   }
 
   const finishDraft = useCallback(async () => {
@@ -584,6 +640,72 @@ export default function Home() {
     setDraftPoints([]);
     setIsDrawing(false);
   }, [activePage, activePageAnnotationIds.length, activePageId, draftPoints, upsertAnnotationInStore]);
+
+  const finishAreaDraft = useCallback(async () => {
+    if (!activePageId || areaDraftPoints.length < 3) {
+      setAreaDraftPoints([]);
+      return;
+    }
+
+    const pixelArea = getPolygonArea(areaDraftPoints);
+    const measurement =
+      activePage?.pixelsPerUnit && activePage.pixelsPerUnit > 0
+        ? pixelArea / (activePage.pixelsPerUnit * activePage.pixelsPerUnit)
+        : pixelArea;
+    const measurementUnit = activePage?.pixelsPerUnit ? `${activePage.unit ?? "unit"}²` : "px²";
+
+    const annotation = await createAnnotation({
+      pageId: activePageId,
+      name: `Area ${activePageAnnotationIds.length + 1}`,
+      toolType: "area",
+      points: areaDraftPoints,
+      measurement,
+      unit: measurementUnit,
+    });
+
+    upsertAnnotationInStore(annotation);
+    setAreaDraftPoints([]);
+    setIsDrawingArea(false);
+  }, [activePage, activePageAnnotationIds.length, activePageId, areaDraftPoints, upsertAnnotationInStore]);
+
+  const toggleLineMode = useCallback(() => {
+    setIsDrawingArea(false);
+    setAreaDraftPoints([]);
+    setIsCalibrating(false);
+    setCalibrationDraftPoints([]);
+    setIsDrawing((value) => {
+      if (value) {
+        setDraftPoints([]);
+      }
+      return !value;
+    });
+  }, []);
+
+  const toggleAreaMode = useCallback(() => {
+    setIsDrawing(false);
+    setDraftPoints([]);
+    setIsCalibrating(false);
+    setCalibrationDraftPoints([]);
+    setIsDrawingArea((value) => {
+      if (value) {
+        setAreaDraftPoints([]);
+      }
+      return !value;
+    });
+  }, []);
+
+  const toggleCalibrateMode = useCallback(() => {
+    setIsDrawing(false);
+    setDraftPoints([]);
+    setIsDrawingArea(false);
+    setAreaDraftPoints([]);
+    setIsCalibrating((value) => {
+      if (value) {
+        setCalibrationDraftPoints([]);
+      }
+      return !value;
+    });
+  }, []);
 
   const saveCalibration = useCallback(async () => {
     if (!activePage || calibrationDraftPoints.length !== 2) {
@@ -633,12 +755,41 @@ export default function Home() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      const modifierPressed = event.metaKey || event.ctrlKey;
+      const key = event.key.toLowerCase();
+      const isShortcut =
+        (modifierPressed && event.shiftKey && ["l", "a", "c"].includes(key)) ||
+        (event.altKey && ["l", "a", "c"].includes(key));
+
+      if (isShortcut && !isTextEntryTarget(event.target)) {
+        event.preventDefault();
+
+        if (key === "l") {
+          toggleLineMode();
+          return;
+        }
+
+        if (key === "a") {
+          toggleAreaMode();
+          return;
+        }
+
+        if (key === "c") {
+          toggleCalibrateMode();
+          return;
+        }
+      }
+
       if (event.key !== "Enter") {
         return;
       }
       event.preventDefault();
       if (isCalibrating) {
         void saveCalibration();
+        return;
+      }
+      if (isDrawingArea) {
+        void finishAreaDraft();
         return;
       }
       if (isDrawing) {
@@ -648,7 +799,17 @@ export default function Home() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [finishDraft, isCalibrating, isDrawing, saveCalibration]);
+  }, [
+    finishAreaDraft,
+    finishDraft,
+    isCalibrating,
+    isDrawing,
+    isDrawingArea,
+    saveCalibration,
+    toggleAreaMode,
+    toggleCalibrateMode,
+    toggleLineMode,
+  ]);
 
   async function handleDeleteSelected() {
     if (!selectedAnnotationId || !activePageId) {
@@ -670,12 +831,13 @@ export default function Home() {
   }
 
   const draftFlatPoints = draftPoints.flatMap((point) => [point.x, point.y]);
+  const areaDraftFlatPoints = areaDraftPoints.flatMap((point) => [point.x, point.y]);
   const calibrationDraftFlatPoints = calibrationDraftPoints.flatMap((point) => [point.x, point.y]);
   const savedCalibrationLine =
     activePageId && calibrationLineByPage[activePageId] ? calibrationLineByPage[activePageId] : null;
 
   return (
-    <main className="flex min-h-screen w-full gap-4 bg-zinc-50 p-4">
+    <main className="flex min-h-screen w-full gap-4 overflow-x-auto bg-zinc-50 p-4">
       <Card className="w-[320px] shrink-0">
         <CardHeader>
           <CardTitle>Blueprint Controls</CardTitle>
@@ -695,42 +857,50 @@ export default function Home() {
             <Button
               variant={isDrawing ? "secondary" : "default"}
               size="sm"
-              onClick={() => {
-                setIsCalibrating(false);
-                setCalibrationDraftPoints([]);
-                setIsDrawing((value) => !value);
-                if (isDrawing) {
-                  setDraftPoints([]);
-                }
-              }}
+              onClick={toggleLineMode}
               disabled={!activePageId}
+              title="Shortcut: Cmd/Ctrl+Shift+L or Alt+L"
             >
               <MousePointer2 className="h-4 w-4" />
-              {isDrawing ? "Cancel Line" : "Draw Line"}
+              {isDrawing ? "Cancel Line (⌘/Ctrl+Shift+L)" : "Draw Line (⌘/Ctrl+Shift+L)"}
+            </Button>
+            <Button
+              variant={isDrawingArea ? "secondary" : "outline"}
+              size="sm"
+              onClick={toggleAreaMode}
+              disabled={!activePageId}
+              title="Shortcut: Cmd/Ctrl+Shift+A or Alt+A"
+            >
+              <FileImage className="h-4 w-4" />
+              {isDrawingArea ? "Cancel Area (⌘/Ctrl+Shift+A)" : "Draw Area (⌘/Ctrl+Shift+A)"}
             </Button>
             <Button
               variant={isCalibrating ? "secondary" : "outline"}
               size="sm"
-              onClick={() => {
-                setIsDrawing(false);
-                setDraftPoints([]);
-                setIsCalibrating((value) => !value);
-                if (isCalibrating) {
-                  setCalibrationDraftPoints([]);
-                }
-              }}
+              onClick={toggleCalibrateMode}
               disabled={!activePageId}
+              title="Shortcut: Cmd/Ctrl+Shift+C or Alt+C"
             >
               <Ruler className="h-4 w-4" />
-              {isCalibrating ? "Cancel Calibrate" : "Calibrate"}
+              {isCalibrating ? "Cancel Calibrate (⌘/Ctrl+Shift+C)" : "Calibrate (⌘/Ctrl+Shift+C)"}
             </Button>
             <Button
               size="sm"
               variant="outline"
-              onClick={() => void finishDraft()}
-              disabled={draftPoints.length < 2 || !isDrawing}
+              onClick={() => {
+                if (isDrawingArea) {
+                  void finishAreaDraft();
+                } else {
+                  void finishDraft();
+                }
+              }}
+              disabled={
+                (isDrawing && draftPoints.length < 2) ||
+                (isDrawingArea && areaDraftPoints.length < 3) ||
+                (!isDrawing && !isDrawingArea)
+              }
             >
-              Finish (Enter)
+              {isDrawingArea ? "Finish Area (Enter)" : "Finish (Enter)"}
             </Button>
           </div>
 
@@ -811,8 +981,10 @@ export default function Home() {
                         setActivePageId(page.id);
                         fitStageToPage(page.width, page.height);
                         setDraftPoints([]);
+                        setAreaDraftPoints([]);
                         setCalibrationDraftPoints([]);
                         setIsDrawing(false);
+                        setIsDrawingArea(false);
                         setIsCalibrating(false);
                       }}
                     >
@@ -867,7 +1039,7 @@ export default function Home() {
         </CardContent>
       </Card>
 
-      <div className="flex flex-1 flex-col gap-4">
+      <div className="flex shrink-0 flex-col gap-4" style={{ width: RIGHT_COLUMN_WIDTH }}>
         <Card className="flex-1 overflow-hidden">
           <CardHeader className="flex-row items-center justify-between space-y-0">
             <CardTitle className="text-sm">Canvas</CardTitle>
@@ -888,14 +1060,19 @@ export default function Home() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="overflow-auto rounded-md border border-zinc-200 bg-white">
+            <div className="relative overflow-auto rounded-md border border-zinc-200 bg-white">
+              <div className="absolute right-2 top-2 z-10 rounded bg-black/70 px-2 py-1 text-xs font-medium text-white">
+                {cursorPosition
+                  ? `X: ${cursorPosition.x.toFixed(1)}  Y: ${cursorPosition.y.toFixed(1)}`
+                  : "X: -  Y: -"}
+              </div>
               <Stage
                 ref={(value) => {
                   stageRef.current = value;
                 }}
                 width={STAGE_WIDTH}
                 height={STAGE_HEIGHT}
-                draggable={!isDrawing && !isCalibrating}
+                draggable={!isDrawing && !isDrawingArea && !isCalibrating}
                 x={transform.x}
                 y={transform.y}
                 scaleX={transform.scale}
@@ -908,10 +1085,14 @@ export default function Home() {
                   });
                 }}
                 onWheel={handleStageWheel}
+                onMouseMove={handleStageMouseMove}
+                onMouseLeave={() => setCursorPosition(null)}
                 onMouseDown={handleStageMouseDown}
                 onDblClick={() => {
                   if (isCalibrating) {
                     void saveCalibration();
+                  } else if (isDrawingArea) {
+                    void finishAreaDraft();
                   } else if (isDrawing) {
                     void finishDraft();
                   }
@@ -932,6 +1113,18 @@ export default function Home() {
                       lineCap="round"
                       lineJoin="round"
                       dash={[6, 4]}
+                    />
+                  )}
+                  {areaDraftPoints.length > 2 && (
+                    <Line
+                      points={areaDraftFlatPoints}
+                      stroke="#0f766e"
+                      strokeWidth={2}
+                      lineCap="round"
+                      lineJoin="round"
+                      dash={[6, 4]}
+                      closed
+                      fill="rgba(15, 118, 110, 0.14)"
                     />
                   )}
                   {calibrationDraftFlatPoints.length > 1 && (
