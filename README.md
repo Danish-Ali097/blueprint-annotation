@@ -1,36 +1,147 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Blueprint Annotation Canvas
 
-## Getting Started
+Single-page full-stack application for blueprint measurement and annotation.
 
-First, run the development server:
+The app supports:
+- image/PDF upload (multi-page PDF)
+- page-based navigation with thumbnails
+- smooth pan/zoom canvas interaction
+- line and area drawing tools
+- per-page scale calibration (real-world units)
+- annotation persistence with PostgreSQL + Prisma
+- shape management (rename/delete)
+
+---
+
+## Tech Stack
+
+- **Framework**: Next.js (App Router) + React + TypeScript
+- **Canvas**: `react-konva` + `konva`
+- **State management**: Zustand (normalized annotation state)
+- **DB**: PostgreSQL (Docker) + Prisma
+- **Validation**: Zod
+- **Styling/UI**: Tailwind + shadcn-style UI components
+
+---
+
+## Setup
+
+### Prerequisites
+- Node.js 20+
+- npm or yarn
+- Docker
+
+### 1) Start PostgreSQL
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+docker compose up -d
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2) Configure environment
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Create `.env.local`:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+DATABASE_URL="postgresql://blueprint_user:blueprint_pass@localhost:5432/blueprint?sslmode=disable"
+```
 
-## Learn More
+### 3) Install and run (single command)
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm install && npm run dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+> Equivalent with yarn:
+> `yarn install && yarn dev`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 4) Initialize DB schema (first time only)
 
-## Deploy on Vercel
+```bash
+npm run prisma:migrate
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+App runs at [http://localhost:3000](http://localhost:3000).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+
+## Available Scripts
+
+- `npm run dev` - validate env and run dev server
+- `npm run build` - validate env and build production bundle
+- `npm run start` - validate env and start production server
+- `npm run lint` - run ESLint
+- `npm run prisma:migrate` - apply Prisma migrations
+- `npm run prisma:generate` - regenerate Prisma client
+- `npm run prisma:studio` - open Prisma Studio
+
+---
+
+## Architecture Overview
+
+### Frontend
+
+- `src/app/page.tsx`
+  - main canvas screen and tool orchestration
+  - upload flow, page switching, calibration, drawing logic
+- `src/components/canvas/annotation-shape.tsx`
+  - memoized annotation renderer
+- `src/stores/canvas-store.ts`
+  - normalized state:
+    - `annotationsById`
+    - `annotationIdsByPage`
+  - helps avoid unnecessary full-list rerenders
+
+### Backend (Route Handlers + services)
+
+- `src/app/api/*`
+  - `files`, `pages`, `annotations`, `uploads`, `health`
+- `src/services/*`
+  - DB logic extracted from handlers
+- `src/lib/validation/*`
+  - request payload validation with Zod
+
+### Data Model
+
+- **File** -> uploaded source file (image or PDF)
+- **Page** -> page-level metadata/calibration
+- **Annotation** -> page-level shapes and measurements
+
+Calibration is saved per page:
+- `pixelsPerUnit`
+- `unit`
+- `calibrationPoints`
+
+---
+
+## Performance Notes
+
+- PDF rendering is **lazy** per page (not all pages at once)
+- active page image is rendered on demand
+- annotations are loaded by `pageId`
+- shape renderer is memoized and selection-aware
+- tool modes prevent unnecessary stage updates while drawing
+
+---
+
+## Known Limitations / Trade-offs
+
+- Uploaded files are stored locally in `public/uploads` (demo-friendly, not cloud/object storage).
+- PDF page images are generated client-side via `pdfjs-dist`; very large PDFs can still take time on first page render.
+- Real-time collaboration is not included in this version.
+- Recent uploads persist metadata and local file paths; if local files are manually removed, preview rendering will fail.
+
+---
+
+## What I Would Improve Next
+
+- move file and preview storage to object storage (S3/GCS)
+- background page prefetch and thumbnail generation worker
+- richer annotation editing (vertex drag, snapping, undo/redo)
+- role-based multi-user project support
+- collaborative presence and conflict-safe annotation updates
+
+---
+
+## Demo
+
+See `DEMO_SCRIPT.md` for a 2-3 minute walkthrough script.
