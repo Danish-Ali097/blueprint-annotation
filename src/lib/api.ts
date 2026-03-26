@@ -6,6 +6,12 @@ type ApiResponse<T> = {
   error?: string;
 };
 
+type UploadedAsset = {
+  name: string;
+  path: string;
+  mimeType: string;
+};
+
 async function parseJson<T>(response: Response): Promise<ApiResponse<T>> {
   const json = (await response.json()) as ApiResponse<T>;
   if (!response.ok || !json.ok) {
@@ -25,6 +31,19 @@ export async function createFile(payload: { name: string; path: string; userName
   return data.data;
 }
 
+export async function uploadAsset(file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch("/api/uploads", {
+    method: "POST",
+    body: formData,
+  });
+
+  const data = await parseJson<UploadedAsset>(response);
+  return data.data;
+}
+
 export async function listFiles() {
   const response = await fetch("/api/files");
   const data = await parseJson<BlueprintFile[]>(response);
@@ -39,6 +58,7 @@ export async function upsertPage(payload: {
   previewPath?: string;
   pixelsPerUnit?: number;
   unit?: string;
+  calibrationPoints?: [Point, Point];
 }) {
   const response = await fetch("/api/pages", {
     method: "POST",

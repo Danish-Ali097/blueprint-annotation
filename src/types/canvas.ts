@@ -33,6 +33,7 @@ export type BlueprintPage = {
   previewPath: string | null;
   pixelsPerUnit: number | null;
   unit: string | null;
+  calibrationPoints: [Point, Point] | null;
   createdAt: string;
   updatedAt: string;
 };

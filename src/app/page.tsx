@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { Image as KonvaImage, Layer, Line, Stage, Text } from "react-konva";
 import type Konva from "konva";
-import { Loader2, MousePointer2, Ruler, Trash2, Upload } from "lucide-react";
+import { FileImage, Loader2, MousePointer2, Ruler, Trash2, Upload } from "lucide-react";
 
 import { AnnotationShape } from "@/components/canvas/annotation-shape";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +19,7 @@ import {
   listAnnotations,
   listPages,
   renameAnnotation,
+  uploadAsset,
   upsertPage,
 } from "@/lib/api";
 import { useCanvasStore } from "@/stores/canvas-store";
@@ -51,6 +53,10 @@ type CalibrationLine = {
   realDistance: number;
   unit: string;
 };
+
+function isPdfAsset(name: string, mimeType?: string) {
+  return mimeType === "application/pdf" || name.toLowerCase().endsWith(".pdf");
+}
 
 function getPolylineLength(points: Point[]) {
   if (points.length < 2) {
@@ -333,6 +339,21 @@ export default function Home() {
     if (activePage.unit) {
       setCalibrationUnit(activePage.unit);
     }
+    if (activePage.calibrationPoints && activePage.calibrationPoints.length === 2) {
+      const [start, end] = activePage.calibrationPoints;
+      const realDistance = activePage.pixelsPerUnit
+        ? Math.hypot(end.x - start.x, end.y - start.y) / activePage.pixelsPerUnit
+        : 1;
+
+      setCalibrationLineByPage((state) => ({
+        ...state,
+        [activePage.id]: {
+          points: [start, end],
+          realDistance,
+          unit: activePage.unit ?? "unit",
+        },
+      }));
+    }
   }, [activePage]);
 
   useEffect(() => {
@@ -350,8 +371,16 @@ export default function Home() {
     renderingPageImageRef.current.clear();
     setIsSaving(true);
     try {
-      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-      const uploadedPages = isPdf ? [] : [await extractImagePage(file)];
+      const uploadedAsset = await uploadAsset(file);
+      const isPdf = isPdfAsset(uploadedAsset.name, uploadedAsset.mimeType);
+      const uploadedPages = isPdf
+        ? []
+        : [
+            {
+              ...(await extractImagePage(file)),
+              src: uploadedAsset.path,
+            },
+          ];
       const pdfMetadata = isPdf ? await extractPdfMetadata(file) : null;
       const pageDefinitions = pdfMetadata
         ? pdfMetadata.pages
@@ -362,8 +391,8 @@ export default function Home() {
           }));
 
       const savedFile = await createFile({
-        name: file.name,
-        path: `local://${file.name}-${Date.now()}`,
+        name: uploadedAsset.name,
+        path: uploadedAsset.path,
       });
       setActiveFileId(savedFile.id);
 
@@ -419,6 +448,8 @@ export default function Home() {
 
   async function loadFileFromRecentUpload(file: BlueprintFile) {
     setUploadError(null);
+    failedPageImageRef.current.clear();
+    renderingPageImageRef.current.clear();
     setActiveFileId(file.id);
     const dbPages = await listPages(file.id);
     setPages(dbPages);
@@ -434,10 +465,35 @@ export default function Home() {
     setIsDrawing(false);
     setIsCalibrating(false);
 
-    if (dbPages.length > 0 && !pdfDataByFileIdRef.current[file.id]) {
-      setUploadError(
-        "Loaded pages metadata from recent upload. To render PDF pages again after reload, re-upload the PDF file.",
-      );
+    if (dbPages.length === 0) {
+      return;
+    }
+
+    const isPdf = isPdfAsset(file.name);
+
+    if (!isPdf) {
+      setImageSrcByPage((state) => ({
+        ...state,
+        ...Object.fromEntries(dbPages.map((page) => [page.id, file.path])),
+      }));
+      return;
+    }
+
+    try {
+      const response = await fetch(file.path);
+      if (!response.ok) {
+        throw new Error(`Failed to load stored PDF (${response.status})`);
+      }
+
+      const pdfData = await response.arrayBuffer();
+      setPdfDataByFileId((state) => ({ ...state, [file.id]: pdfData }));
+
+      if (firstPage) {
+        const firstPageImage = await renderPdfPageToImage(pdfData, firstPage.pageNumber);
+        setImageSrcByPage((state) => ({ ...state, [firstPage.id]: firstPageImage }));
+      }
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : "Failed to open stored PDF");
     }
   }
 
@@ -558,6 +614,7 @@ export default function Home() {
       previewPath: activePage.previewPath ?? undefined,
       pixelsPerUnit,
       unit: nextUnit,
+      calibrationPoints: [start, end],
     });
 
     setPages(pages.map((page) => (page.id === updatedPage.id ? updatedPage : page)));
@@ -737,23 +794,46 @@ export default function Home() {
             <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Pages</p>
             <div className="max-h-64 overflow-auto rounded-md border border-zinc-200 p-2">
               <div className="flex flex-wrap gap-2">
-              {pages.map((page) => (
-                <Button
-                  key={page.id}
-                  size="sm"
-                  variant={page.id === activePageId ? "default" : "outline"}
-                  onClick={() => {
-                    setActivePageId(page.id);
-                    fitStageToPage(page.width, page.height);
-                    setDraftPoints([]);
-                    setCalibrationDraftPoints([]);
-                    setIsDrawing(false);
-                    setIsCalibrating(false);
-                  }}
-                >
-                  Page {page.pageNumber}
-                </Button>
-              ))}
+                {pages.map((page) => {
+                  const thumbnailSrc = imageSrcByPage[page.id];
+                  const isActive = page.id === activePageId;
+
+                  return (
+                    <button
+                      key={page.id}
+                      type="button"
+                      className={`flex w-[88px] flex-col items-center gap-2 rounded-md border p-2 text-xs transition-colors ${
+                        isActive
+                          ? "border-blue-500 bg-blue-50 text-blue-900"
+                          : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                      }`}
+                      onClick={() => {
+                        setActivePageId(page.id);
+                        fitStageToPage(page.width, page.height);
+                        setDraftPoints([]);
+                        setCalibrationDraftPoints([]);
+                        setIsDrawing(false);
+                        setIsCalibrating(false);
+                      }}
+                    >
+                      <div className="flex h-14 w-full items-center justify-center overflow-hidden rounded-sm border border-zinc-200 bg-zinc-100">
+                        {thumbnailSrc ? (
+                          <Image
+                            src={thumbnailSrc}
+                            alt={`Page ${page.pageNumber} thumbnail`}
+                            width={88}
+                            height={56}
+                            unoptimized
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <FileImage className="h-5 w-5 text-zinc-500" />
+                        )}
+                      </div>
+                      <span className="font-medium">Page {page.pageNumber}</span>
+                    </button>
+                  );
+                })}
               </div>
               {pages.length === 0 && <p className="px-1 py-2 text-sm text-zinc-500">Upload blueprint to create page.</p>}
             </div>

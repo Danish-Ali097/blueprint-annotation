@@ -75,6 +75,7 @@ export type PageCountAggregateOutputType = {
   previewPath: number
   pixelsPerUnit: number
   unit: number
+  calibrationPoints: number
   createdAt: number
   updatedAt: number
   _all: number
@@ -130,6 +131,7 @@ export type PageCountAggregateInputType = {
   previewPath?: true
   pixelsPerUnit?: true
   unit?: true
+  calibrationPoints?: true
   createdAt?: true
   updatedAt?: true
   _all?: true
@@ -230,6 +232,7 @@ export type PageGroupByOutputType = {
   previewPath: string | null
   pixelsPerUnit: number | null
   unit: string | null
+  calibrationPoints: runtime.JsonValue | null
   createdAt: Date
   updatedAt: Date
   _count: PageCountAggregateOutputType | null
@@ -266,6 +269,7 @@ export type PageWhereInput = {
   previewPath?: Prisma.StringNullableFilter<"Page"> | string | null
   pixelsPerUnit?: Prisma.FloatNullableFilter<"Page"> | number | null
   unit?: Prisma.StringNullableFilter<"Page"> | string | null
+  calibrationPoints?: Prisma.JsonNullableFilter<"Page">
   createdAt?: Prisma.DateTimeFilter<"Page"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Page"> | Date | string
   file?: Prisma.XOR<Prisma.FileScalarRelationFilter, Prisma.FileWhereInput>
@@ -281,6 +285,7 @@ export type PageOrderByWithRelationInput = {
   previewPath?: Prisma.SortOrderInput | Prisma.SortOrder
   pixelsPerUnit?: Prisma.SortOrderInput | Prisma.SortOrder
   unit?: Prisma.SortOrderInput | Prisma.SortOrder
+  calibrationPoints?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   file?: Prisma.FileOrderByWithRelationInput
@@ -300,6 +305,7 @@ export type PageWhereUniqueInput = Prisma.AtLeast<{
   previewPath?: Prisma.StringNullableFilter<"Page"> | string | null
   pixelsPerUnit?: Prisma.FloatNullableFilter<"Page"> | number | null
   unit?: Prisma.StringNullableFilter<"Page"> | string | null
+  calibrationPoints?: Prisma.JsonNullableFilter<"Page">
   createdAt?: Prisma.DateTimeFilter<"Page"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Page"> | Date | string
   file?: Prisma.XOR<Prisma.FileScalarRelationFilter, Prisma.FileWhereInput>
@@ -315,6 +321,7 @@ export type PageOrderByWithAggregationInput = {
   previewPath?: Prisma.SortOrderInput | Prisma.SortOrder
   pixelsPerUnit?: Prisma.SortOrderInput | Prisma.SortOrder
   unit?: Prisma.SortOrderInput | Prisma.SortOrder
+  calibrationPoints?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   _count?: Prisma.PageCountOrderByAggregateInput
@@ -336,6 +343,7 @@ export type PageScalarWhereWithAggregatesInput = {
   previewPath?: Prisma.StringNullableWithAggregatesFilter<"Page"> | string | null
   pixelsPerUnit?: Prisma.FloatNullableWithAggregatesFilter<"Page"> | number | null
   unit?: Prisma.StringNullableWithAggregatesFilter<"Page"> | string | null
+  calibrationPoints?: Prisma.JsonNullableWithAggregatesFilter<"Page">
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"Page"> | Date | string
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"Page"> | Date | string
 }
@@ -348,6 +356,7 @@ export type PageCreateInput = {
   previewPath?: string | null
   pixelsPerUnit?: number | null
   unit?: string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
   file: Prisma.FileCreateNestedOneWithoutPagesInput
@@ -363,6 +372,7 @@ export type PageUncheckedCreateInput = {
   previewPath?: string | null
   pixelsPerUnit?: number | null
   unit?: string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
   annotations?: Prisma.AnnotationUncheckedCreateNestedManyWithoutPageInput
@@ -376,6 +386,7 @@ export type PageUpdateInput = {
   previewPath?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   pixelsPerUnit?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   unit?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   file?: Prisma.FileUpdateOneRequiredWithoutPagesNestedInput
@@ -391,6 +402,7 @@ export type PageUncheckedUpdateInput = {
   previewPath?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   pixelsPerUnit?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   unit?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   annotations?: Prisma.AnnotationUncheckedUpdateManyWithoutPageNestedInput
@@ -405,6 +417,7 @@ export type PageCreateManyInput = {
   previewPath?: string | null
   pixelsPerUnit?: number | null
   unit?: string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -417,6 +430,7 @@ export type PageUpdateManyMutationInput = {
   previewPath?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   pixelsPerUnit?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   unit?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -430,6 +444,7 @@ export type PageUncheckedUpdateManyInput = {
   previewPath?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   pixelsPerUnit?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   unit?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -458,6 +473,7 @@ export type PageCountOrderByAggregateInput = {
   previewPath?: Prisma.SortOrder
   pixelsPerUnit?: Prisma.SortOrder
   unit?: Prisma.SortOrder
+  calibrationPoints?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -591,6 +607,7 @@ export type PageCreateWithoutFileInput = {
   previewPath?: string | null
   pixelsPerUnit?: number | null
   unit?: string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
   annotations?: Prisma.AnnotationCreateNestedManyWithoutPageInput
@@ -604,6 +621,7 @@ export type PageUncheckedCreateWithoutFileInput = {
   previewPath?: string | null
   pixelsPerUnit?: number | null
   unit?: string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
   annotations?: Prisma.AnnotationUncheckedCreateNestedManyWithoutPageInput
@@ -647,6 +665,7 @@ export type PageScalarWhereInput = {
   previewPath?: Prisma.StringNullableFilter<"Page"> | string | null
   pixelsPerUnit?: Prisma.FloatNullableFilter<"Page"> | number | null
   unit?: Prisma.StringNullableFilter<"Page"> | string | null
+  calibrationPoints?: Prisma.JsonNullableFilter<"Page">
   createdAt?: Prisma.DateTimeFilter<"Page"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Page"> | Date | string
 }
@@ -659,6 +678,7 @@ export type PageCreateWithoutAnnotationsInput = {
   previewPath?: string | null
   pixelsPerUnit?: number | null
   unit?: string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
   file: Prisma.FileCreateNestedOneWithoutPagesInput
@@ -673,6 +693,7 @@ export type PageUncheckedCreateWithoutAnnotationsInput = {
   previewPath?: string | null
   pixelsPerUnit?: number | null
   unit?: string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -701,6 +722,7 @@ export type PageUpdateWithoutAnnotationsInput = {
   previewPath?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   pixelsPerUnit?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   unit?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   file?: Prisma.FileUpdateOneRequiredWithoutPagesNestedInput
@@ -715,6 +737,7 @@ export type PageUncheckedUpdateWithoutAnnotationsInput = {
   previewPath?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   pixelsPerUnit?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   unit?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -727,6 +750,7 @@ export type PageCreateManyFileInput = {
   previewPath?: string | null
   pixelsPerUnit?: number | null
   unit?: string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -739,6 +763,7 @@ export type PageUpdateWithoutFileInput = {
   previewPath?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   pixelsPerUnit?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   unit?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   annotations?: Prisma.AnnotationUpdateManyWithoutPageNestedInput
@@ -752,6 +777,7 @@ export type PageUncheckedUpdateWithoutFileInput = {
   previewPath?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   pixelsPerUnit?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   unit?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   annotations?: Prisma.AnnotationUncheckedUpdateManyWithoutPageNestedInput
@@ -765,6 +791,7 @@ export type PageUncheckedUpdateManyWithoutFileInput = {
   previewPath?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   pixelsPerUnit?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   unit?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  calibrationPoints?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -809,6 +836,7 @@ export type PageSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = r
   previewPath?: boolean
   pixelsPerUnit?: boolean
   unit?: boolean
+  calibrationPoints?: boolean
   createdAt?: boolean
   updatedAt?: boolean
   file?: boolean | Prisma.FileDefaultArgs<ExtArgs>
@@ -825,6 +853,7 @@ export type PageSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensio
   previewPath?: boolean
   pixelsPerUnit?: boolean
   unit?: boolean
+  calibrationPoints?: boolean
   createdAt?: boolean
   updatedAt?: boolean
   file?: boolean | Prisma.FileDefaultArgs<ExtArgs>
@@ -839,6 +868,7 @@ export type PageSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensio
   previewPath?: boolean
   pixelsPerUnit?: boolean
   unit?: boolean
+  calibrationPoints?: boolean
   createdAt?: boolean
   updatedAt?: boolean
   file?: boolean | Prisma.FileDefaultArgs<ExtArgs>
@@ -853,11 +883,12 @@ export type PageSelectScalar = {
   previewPath?: boolean
   pixelsPerUnit?: boolean
   unit?: boolean
+  calibrationPoints?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }
 
-export type PageOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "fileId" | "pageNumber" | "width" | "height" | "previewPath" | "pixelsPerUnit" | "unit" | "createdAt" | "updatedAt", ExtArgs["result"]["page"]>
+export type PageOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "fileId" | "pageNumber" | "width" | "height" | "previewPath" | "pixelsPerUnit" | "unit" | "calibrationPoints" | "createdAt" | "updatedAt", ExtArgs["result"]["page"]>
 export type PageInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   file?: boolean | Prisma.FileDefaultArgs<ExtArgs>
   annotations?: boolean | Prisma.Page$annotationsArgs<ExtArgs>
@@ -885,6 +916,7 @@ export type $PagePayload<ExtArgs extends runtime.Types.Extensions.InternalArgs =
     previewPath: string | null
     pixelsPerUnit: number | null
     unit: string | null
+    calibrationPoints: runtime.JsonValue | null
     createdAt: Date
     updatedAt: Date
   }, ExtArgs["result"]["page"]>
@@ -1320,6 +1352,7 @@ export interface PageFieldRefs {
   readonly previewPath: Prisma.FieldRef<"Page", 'String'>
   readonly pixelsPerUnit: Prisma.FieldRef<"Page", 'Float'>
   readonly unit: Prisma.FieldRef<"Page", 'String'>
+  readonly calibrationPoints: Prisma.FieldRef<"Page", 'Json'>
   readonly createdAt: Prisma.FieldRef<"Page", 'DateTime'>
   readonly updatedAt: Prisma.FieldRef<"Page", 'DateTime'>
 }
