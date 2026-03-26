@@ -25,12 +25,20 @@ export async function createFile(payload: { name: string; path: string; userName
   return data.data;
 }
 
+export async function listFiles() {
+  const response = await fetch("/api/files");
+  const data = await parseJson<BlueprintFile[]>(response);
+  return data.data;
+}
+
 export async function upsertPage(payload: {
   fileId: string;
   pageNumber: number;
   width: number;
   height: number;
   previewPath?: string;
+  pixelsPerUnit?: number;
+  unit?: string;
 }) {
   const response = await fetch("/api/pages", {
     method: "POST",

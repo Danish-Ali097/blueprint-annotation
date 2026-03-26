@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Image as KonvaImage, Layer, Line, Stage } from "react-konva";
+import { Image as KonvaImage, Layer, Line, Stage, Text } from "react-konva";
 import type Konva from "konva";
-import { Loader2, MousePointer2, Trash2, Upload } from "lucide-react";
+import { Loader2, MousePointer2, Ruler, Trash2, Upload } from "lucide-react";
 
 import { AnnotationShape } from "@/components/canvas/annotation-shape";
 import { Badge } from "@/components/ui/badge";
@@ -14,13 +14,14 @@ import {
   createAnnotation,
   createFile,
   deleteAnnotation,
+  listFiles as listRecentFiles,
   listAnnotations,
   listPages,
   renameAnnotation,
   upsertPage,
 } from "@/lib/api";
 import { useCanvasStore } from "@/stores/canvas-store";
-import type { BlueprintPage, Point } from "@/types/canvas";
+import type { BlueprintFile, BlueprintPage, Point } from "@/types/canvas";
 
 const STAGE_WIDTH = 1120;
 const STAGE_HEIGHT = 680;
@@ -43,6 +44,12 @@ type UploadedPdfPageMetadata = {
 type UploadedPdfMetadata = {
   pdfData: ArrayBuffer;
   pages: UploadedPdfPageMetadata[];
+};
+
+type CalibrationLine = {
+  points: [Point, Point];
+  realDistance: number;
+  unit: string;
 };
 
 function getPolylineLength(points: Point[]) {
@@ -155,8 +162,17 @@ export default function Home() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingAnnotations, setIsLoadingAnnotations] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [isCalibrating, setIsCalibrating] = useState(false);
   const [draftPoints, setDraftPoints] = useState<Point[]>([]);
+  const [calibrationDraftPoints, setCalibrationDraftPoints] = useState<Point[]>([]);
+  const [calibrationRealDistance, setCalibrationRealDistance] = useState("1");
+  const [calibrationUnit, setCalibrationUnit] = useState("m");
+  const [calibrationLineByPage, setCalibrationLineByPage] = useState<Record<string, CalibrationLine>>(
+    {},
+  );
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [recentFiles, setRecentFiles] = useState<BlueprintFile[]>([]);
+  const [isLoadingRecentFiles, setIsLoadingRecentFiles] = useState(false);
   const [pdfDataByFileId, setPdfDataByFileId] = useState<Record<string, ArrayBuffer>>({});
   const [isRenderingPageImageById, setIsRenderingPageImageById] = useState<Record<string, boolean>>({});
 
@@ -213,6 +229,16 @@ export default function Home() {
     },
     [setAnnotationsForPage],
   );
+
+  const loadRecentUploads = useCallback(async () => {
+    setIsLoadingRecentFiles(true);
+    try {
+      const files = await listRecentFiles();
+      setRecentFiles(files);
+    } finally {
+      setIsLoadingRecentFiles(false);
+    }
+  }, []);
 
   const ensurePageImage = useCallback(
     async (page: BlueprintPage, fileId: string) => {
@@ -299,6 +325,20 @@ export default function Home() {
     }
   }, [activeFileId, activePage, ensurePageImage, imageSrcByPage]);
 
+  useEffect(() => {
+    if (!activePage) {
+      return;
+    }
+
+    if (activePage.unit) {
+      setCalibrationUnit(activePage.unit);
+    }
+  }, [activePage]);
+
+  useEffect(() => {
+    void loadRecentUploads();
+  }, [loadRecentUploads]);
+
   async function onUploadBlueprint(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
@@ -366,11 +406,38 @@ export default function Home() {
         setTransform({ x: 0, y: 0, scale: 1 });
       }
       setDraftPoints([]);
+      setCalibrationDraftPoints([]);
       setIsDrawing(false);
+      setIsCalibrating(false);
+      await loadRecentUploads();
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "Failed to process uploaded file");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function loadFileFromRecentUpload(file: BlueprintFile) {
+    setUploadError(null);
+    setActiveFileId(file.id);
+    const dbPages = await listPages(file.id);
+    setPages(dbPages);
+    const firstPage = dbPages[0] ?? null;
+    setActivePageId(firstPage?.id ?? null);
+    if (firstPage) {
+      fitStageToPage(firstPage.width, firstPage.height);
+    } else {
+      setTransform({ x: 0, y: 0, scale: 1 });
+    }
+    setDraftPoints([]);
+    setCalibrationDraftPoints([]);
+    setIsDrawing(false);
+    setIsCalibrating(false);
+
+    if (dbPages.length > 0 && !pdfDataByFileIdRef.current[file.id]) {
+      setUploadError(
+        "Loaded pages metadata from recent upload. To render PDF pages again after reload, re-upload the PDF file.",
+      );
     }
   }
 
@@ -405,7 +472,7 @@ export default function Home() {
   }
 
   function handleStageMouseDown(event: Konva.KonvaEventObject<MouseEvent>) {
-    if (!isDrawing || !activePageId) {
+    if ((!isDrawing && !isCalibrating) || !activePageId) {
       return;
     }
 
@@ -423,6 +490,16 @@ export default function Home() {
       return;
     }
 
+    if (isCalibrating) {
+      setCalibrationDraftPoints((points) => {
+        if (points.length >= 2) {
+          return [worldPoint];
+        }
+        return [...points, worldPoint];
+      });
+      return;
+    }
+
     setDraftPoints((points) => [...points, worldPoint]);
   }
 
@@ -432,33 +509,89 @@ export default function Home() {
       return;
     }
 
-    const measurement = getPolylineLength(draftPoints);
+    const pixelLength = getPolylineLength(draftPoints);
+    const measurement =
+      activePage?.pixelsPerUnit && activePage.pixelsPerUnit > 0
+        ? pixelLength / activePage.pixelsPerUnit
+        : pixelLength;
+    const measurementUnit = activePage?.pixelsPerUnit ? (activePage.unit ?? "unit") : "px";
     const annotation = await createAnnotation({
       pageId: activePageId,
       name: `Line ${activePageAnnotationIds.length + 1}`,
       toolType: "polyline",
       points: draftPoints,
       measurement,
-      unit: "px",
+      unit: measurementUnit,
     });
 
     upsertAnnotationInStore(annotation);
     setDraftPoints([]);
     setIsDrawing(false);
-  }, [activePageAnnotationIds.length, activePageId, draftPoints, upsertAnnotationInStore]);
+  }, [activePage, activePageAnnotationIds.length, activePageId, draftPoints, upsertAnnotationInStore]);
+
+  const saveCalibration = useCallback(async () => {
+    if (!activePage || calibrationDraftPoints.length !== 2) {
+      return;
+    }
+
+    const realDistance = Number(calibrationRealDistance);
+    if (!Number.isFinite(realDistance) || realDistance <= 0) {
+      setUploadError("Calibration distance must be greater than 0");
+      return;
+    }
+
+    const [start, end] = calibrationDraftPoints as [Point, Point];
+    const pixelDistance = Math.hypot(end.x - start.x, end.y - start.y);
+    if (pixelDistance <= 0) {
+      setUploadError("Calibration points must form a non-zero distance");
+      return;
+    }
+
+    const pixelsPerUnit = pixelDistance / realDistance;
+    const nextUnit = calibrationUnit.trim() || "unit";
+
+    const updatedPage = await upsertPage({
+      fileId: activePage.fileId,
+      pageNumber: activePage.pageNumber,
+      width: activePage.width,
+      height: activePage.height,
+      previewPath: activePage.previewPath ?? undefined,
+      pixelsPerUnit,
+      unit: nextUnit,
+    });
+
+    setPages(pages.map((page) => (page.id === updatedPage.id ? updatedPage : page)));
+    setCalibrationLineByPage((state) => ({
+      ...state,
+      [activePage.id]: {
+        points: [start, end],
+        realDistance,
+        unit: nextUnit,
+      },
+    }));
+    setCalibrationDraftPoints([]);
+    setIsCalibrating(false);
+    setUploadError(null);
+  }, [activePage, calibrationDraftPoints, calibrationRealDistance, calibrationUnit, pages, setPages]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== "Enter" || !isDrawing) {
+      if (event.key !== "Enter") {
         return;
       }
       event.preventDefault();
-      void finishDraft();
+      if (isCalibrating) {
+        void saveCalibration();
+        return;
+      }
+      if (isDrawing) {
+        void finishDraft();
+      }
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [finishDraft, isDrawing]);
+  }, [finishDraft, isCalibrating, isDrawing, saveCalibration]);
 
   async function handleDeleteSelected() {
     if (!selectedAnnotationId || !activePageId) {
@@ -480,6 +613,9 @@ export default function Home() {
   }
 
   const draftFlatPoints = draftPoints.flatMap((point) => [point.x, point.y]);
+  const calibrationDraftFlatPoints = calibrationDraftPoints.flatMap((point) => [point.x, point.y]);
+  const savedCalibrationLine =
+    activePageId && calibrationLineByPage[activePageId] ? calibrationLineByPage[activePageId] : null;
 
   return (
     <main className="flex min-h-screen w-full gap-4 bg-zinc-50 p-4">
@@ -503,6 +639,8 @@ export default function Home() {
               variant={isDrawing ? "secondary" : "default"}
               size="sm"
               onClick={() => {
+                setIsCalibrating(false);
+                setCalibrationDraftPoints([]);
                 setIsDrawing((value) => !value);
                 if (isDrawing) {
                   setDraftPoints([]);
@@ -513,14 +651,92 @@ export default function Home() {
               <MousePointer2 className="h-4 w-4" />
               {isDrawing ? "Cancel Line" : "Draw Line"}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => void finishDraft()} disabled={draftPoints.length < 2}>
+            <Button
+              variant={isCalibrating ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => {
+                setIsDrawing(false);
+                setDraftPoints([]);
+                setIsCalibrating((value) => !value);
+                if (isCalibrating) {
+                  setCalibrationDraftPoints([]);
+                }
+              }}
+              disabled={!activePageId}
+            >
+              <Ruler className="h-4 w-4" />
+              {isCalibrating ? "Cancel Calibrate" : "Calibrate"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void finishDraft()}
+              disabled={draftPoints.length < 2 || !isDrawing}
+            >
               Finish (Enter)
             </Button>
           </div>
 
+          <div className="space-y-2 rounded-md border border-zinc-200 p-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Page Calibration</p>
+            <div className="grid grid-cols-[1fr_80px] gap-2">
+              <Input
+                value={calibrationRealDistance}
+                onChange={(event) => setCalibrationRealDistance(event.target.value)}
+                placeholder="Known distance"
+                inputMode="decimal"
+              />
+              <Input value={calibrationUnit} onChange={(event) => setCalibrationUnit(event.target.value)} />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!isCalibrating || calibrationDraftPoints.length !== 2}
+                onClick={() => void saveCalibration()}
+              >
+                Save Calibration
+              </Button>
+              <p className="text-xs text-zinc-500">
+                {activePage?.pixelsPerUnit
+                  ? `1 ${activePage.unit ?? "unit"} = ${activePage.pixelsPerUnit.toFixed(2)} px`
+                  : "Not calibrated"}
+              </p>
+            </div>
+            {isCalibrating ? (
+              <p className="text-xs text-zinc-500">Click two points on canvas, then save (or press Enter).</p>
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Recent Uploads</p>
+            <div className="max-h-40 space-y-2 overflow-auto rounded-md border border-zinc-200 p-2">
+              {recentFiles.map((file) => (
+                <button
+                  key={file.id}
+                  type="button"
+                  className={`w-full rounded-md border px-2 py-2 text-left text-xs transition-colors ${
+                    activeFileId === file.id
+                      ? "border-blue-500 bg-blue-50 text-blue-900"
+                      : "border-zinc-200 hover:bg-zinc-50"
+                  }`}
+                  onClick={() => void loadFileFromRecentUpload(file)}
+                >
+                  <p className="truncate font-medium">{file.name}</p>
+                  <p className="mt-1 text-zinc-500">{new Date(file.updatedAt).toLocaleString()}</p>
+                </button>
+              ))}
+              {!isLoadingRecentFiles && recentFiles.length === 0 ? (
+                <p className="px-1 py-2 text-xs text-zinc-500">No uploads yet.</p>
+              ) : null}
+              {isLoadingRecentFiles ? <p className="px-1 py-2 text-xs text-zinc-500">Loading uploads...</p> : null}
+            </div>
+          </div>
+
           <div className="space-y-2">
             <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Pages</p>
-            <div className="flex flex-wrap gap-2">
+            <div className="max-h-64 overflow-auto rounded-md border border-zinc-200 p-2">
+              <div className="flex flex-wrap gap-2">
               {pages.map((page) => (
                 <Button
                   key={page.id}
@@ -529,12 +745,17 @@ export default function Home() {
                   onClick={() => {
                     setActivePageId(page.id);
                     fitStageToPage(page.width, page.height);
+                    setDraftPoints([]);
+                    setCalibrationDraftPoints([]);
+                    setIsDrawing(false);
+                    setIsCalibrating(false);
                   }}
                 >
                   Page {page.pageNumber}
                 </Button>
               ))}
-              {pages.length === 0 && <p className="text-sm text-zinc-500">Upload blueprint to create page.</p>}
+              </div>
+              {pages.length === 0 && <p className="px-1 py-2 text-sm text-zinc-500">Upload blueprint to create page.</p>}
             </div>
           </div>
 
@@ -594,7 +815,7 @@ export default function Home() {
                 }}
                 width={STAGE_WIDTH}
                 height={STAGE_HEIGHT}
-                draggable={!isDrawing}
+                draggable={!isDrawing && !isCalibrating}
                 x={transform.x}
                 y={transform.y}
                 scaleX={transform.scale}
@@ -609,7 +830,9 @@ export default function Home() {
                 onWheel={handleStageWheel}
                 onMouseDown={handleStageMouseDown}
                 onDblClick={() => {
-                  if (isDrawing) {
+                  if (isCalibrating) {
+                    void saveCalibration();
+                  } else if (isDrawing) {
                     void finishDraft();
                   }
                 }}
@@ -619,12 +842,7 @@ export default function Home() {
                 </Layer>
                 <Layer>
                   {activePageAnnotationIds.map((annotationId) => (
-                    <AnnotationShape
-                      key={annotationId}
-                      annotationId={annotationId}
-                      isSelected={selectedAnnotationId === annotationId}
-                      onSelect={setSelectedAnnotationId}
-                    />
+                    <AnnotationShape key={annotationId} annotationId={annotationId} />
                   ))}
                   {draftFlatPoints.length > 1 && (
                     <Line
@@ -635,6 +853,34 @@ export default function Home() {
                       lineJoin="round"
                       dash={[6, 4]}
                     />
+                  )}
+                  {calibrationDraftFlatPoints.length > 1 && (
+                    <Line
+                      points={calibrationDraftFlatPoints}
+                      stroke="#16a34a"
+                      strokeWidth={2}
+                      lineCap="round"
+                      lineJoin="round"
+                      dash={[6, 4]}
+                    />
+                  )}
+                  {savedCalibrationLine && (
+                    <>
+                      <Line
+                        points={savedCalibrationLine.points.flatMap((point) => [point.x, point.y])}
+                        stroke="#16a34a"
+                        strokeWidth={2}
+                        lineCap="round"
+                        lineJoin="round"
+                      />
+                      <Text
+                        x={(savedCalibrationLine.points[0].x + savedCalibrationLine.points[1].x) / 2}
+                        y={(savedCalibrationLine.points[0].y + savedCalibrationLine.points[1].y) / 2 - 16}
+                        text={`${savedCalibrationLine.realDistance} ${savedCalibrationLine.unit}`}
+                        fontSize={12}
+                        fill="#166534"
+                      />
+                    </>
                   )}
                 </Layer>
               </Stage>

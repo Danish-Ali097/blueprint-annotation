@@ -7,16 +7,16 @@ import { useCanvasStore } from "@/stores/canvas-store";
 
 type AnnotationShapeProps = {
   annotationId: string;
-  isSelected: boolean;
-  onSelect: (annotationId: string) => void;
 };
 
 function formatMeasurement(value: number, unit: string) {
   return `${value.toFixed(2)} ${unit}`;
 }
 
-function AnnotationShapeBase({ annotationId, isSelected, onSelect }: AnnotationShapeProps) {
+function AnnotationShapeBase({ annotationId }: AnnotationShapeProps) {
   const annotation = useCanvasStore((state) => state.annotationsById[annotationId]);
+  const isSelected = useCanvasStore((state) => state.selectedAnnotationId === annotationId);
+  const setSelectedAnnotationId = useCanvasStore((state) => state.setSelectedAnnotationId);
 
   if (!annotation || annotation.points.length === 0) {
     return null;
@@ -27,15 +27,22 @@ function AnnotationShapeBase({ annotationId, isSelected, onSelect }: AnnotationS
   const lastPoint = annotation.points[annotation.points.length - 1];
   const labelX = (firstPoint.x + lastPoint.x) / 2;
   const labelY = (firstPoint.y + lastPoint.y) / 2 - 18;
+  const isClosedShape =
+    annotation.toolType === "area" || annotation.toolType === "polygon" || annotation.points.length >= 3;
 
   return (
-    <Group onClick={() => onSelect(annotationId)} onTap={() => onSelect(annotationId)}>
+    <Group
+      onClick={() => setSelectedAnnotationId(annotationId)}
+      onTap={() => setSelectedAnnotationId(annotationId)}
+    >
       <Line
         points={flatPoints}
         stroke={isSelected ? "#2563eb" : "#dc2626"}
         strokeWidth={isSelected ? 3 : 2}
         lineCap="round"
         lineJoin="round"
+        closed={isClosedShape}
+        fill={isSelected ? "rgba(37, 99, 235, 0.18)" : "rgba(220, 38, 38, 0.12)"}
       />
       {annotation.points.map((point, index) => (
         <Circle
