@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: blueprint-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: blueprint
+      POSTGRES_USER: blueprint_user
+      POSTGRES_PASSWORD: blueprint_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blueprint_user -d blueprint"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:

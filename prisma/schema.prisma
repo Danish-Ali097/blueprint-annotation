@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  files     File[]
+}
+
+model File {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  name        String
+  path        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  pages       Page[]
+}
+
+model Page {
+  id            String       @id @default(cuid())
+  fileId        String
+  file          File         @relation(fields: [fileId], references: [id])
+  pageNumber    Int
+  width         Int
+  height        Int
+  previewPath   String?
+  pixelsPerUnit Float?
+  unit          String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  annotations   Annotation[]
+
+  @@unique([fileId, pageNumber])
+  @@index([fileId])
+}
+
+model Annotation {
+  id          String   @id @default(cuid())
+  pageId      String
+  page        Page     @relation(fields: [pageId], references: [id])
+  name        String
+  toolType    String
+  points      Json
+  measurement Float
+  unit        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([pageId])
+}
