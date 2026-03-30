@@ -4,12 +4,14 @@ Single-page full-stack application for blueprint measurement and annotation.
 
 The app supports:
 - image/PDF upload (multi-page PDF)
+- backend PDF-to-image conversion with progress polling
 - page-based navigation with thumbnails
 - smooth pan/zoom canvas interaction
 - line and area drawing tools
 - per-page scale calibration (real-world units)
 - annotation persistence with PostgreSQL + Prisma
 - shape management (rename/delete)
+- responsive 3-column UI (controls, canvas, annotations)
 
 ---
 
@@ -81,8 +83,12 @@ App runs at [http://localhost:3000](http://localhost:3000).
 ### Frontend
 
 - `src/app/page.tsx`
-  - main canvas screen and tool orchestration
-  - upload flow, page switching, calibration, drawing logic
+  - main UI orchestration (upload flow, page switching, calibration, drawing)
+  - responsive layout and adaptive canvas sizing (`stageWidth`/`stageHeight`)
+  - keyboard shortcuts:
+    - Cmd/Ctrl+Shift+L or Alt+L: line tool
+    - Cmd/Ctrl+Shift+A or Alt+A: area tool
+    - Cmd/Ctrl+Shift+C or Alt+C: calibrate tool
 - `src/components/canvas/annotation-shape.tsx`
   - memoized annotation renderer
 - `src/stores/canvas-store.ts`
@@ -95,6 +101,13 @@ App runs at [http://localhost:3000](http://localhost:3000).
 
 - `src/app/api/*`
   - `files`, `pages`, `annotations`, `uploads`, `health`
+- `src/app/api/uploads/route.ts`
+  - stores uploaded files under `public/uploads`
+  - starts backend PDF conversion jobs
+  - exposes conversion status endpoint (`GET /api/uploads?jobId=...`)
+- `scripts/convert-pdf.mjs`
+  - converts PDF pages to WebP (PNG fallback)
+  - streams progress events consumed by upload jobs
 - `src/services/*`
   - DB logic extracted from handlers
 - `src/lib/validation/*`
@@ -113,10 +126,29 @@ Calibration is saved per page:
 
 ---
 
+## Upload and Conversion Flow
+
+### Images
+
+1. Upload file to `POST /api/uploads`
+2. Create `File` record
+3. Upsert one `Page` with image dimensions and preview path
+
+### PDFs
+
+1. Upload file to `POST /api/uploads`
+2. API stores PDF and returns `conversionJobId`
+3. Frontend polls `GET /api/uploads?jobId=...`
+4. UI shows progress: `Converting X of Y pages...`
+5. On completion, frontend creates/updates `Page` rows using generated image paths
+
+---
+
 ## Performance Notes
 
-- PDF rendering is **lazy** per page (not all pages at once)
-- active page image is rendered on demand
+- PDF rendering is offloaded to backend conversion jobs
+- converted pages are persisted as static images in `public/uploads`
+- frontend receives incremental conversion progress
 - annotations are loaded by `pageId`
 - shape renderer is memoized and selection-aware
 - tool modes prevent unnecessary stage updates while drawing
@@ -126,7 +158,9 @@ Calibration is saved per page:
 ## Known Limitations / Trade-offs
 
 - Uploaded files are stored locally in `public/uploads` (demo-friendly, not cloud/object storage).
-- PDF page images are generated client-side via `pdfjs-dist`; very large PDFs can still take time on first page render.
+- Conversion job state is currently in-memory (`Map`) in the uploads route.
+- If the server restarts during conversion, active job tracking is lost.
+- PDF page records are finalized after frontend observes job completion (not fully backend-finalized yet).
 - Real-time collaboration is not included in this version.
 - Recent uploads persist metadata and local file paths; if local files are manually removed, preview rendering will fail.
 
@@ -135,13 +169,9 @@ Calibration is saved per page:
 ## What I Would Improve Next
 
 - move file and preview storage to object storage (S3/GCS)
-- background page prefetch and thumbnail generation worker
+- use a persistent job queue (Redis/BullMQ or DB-backed workers)
+- finalize file/page persistence fully on backend job completion
 - richer annotation editing (vertex drag, snapping, undo/redo)
 - role-based multi-user project support
 - collaborative presence and conflict-safe annotation updates
 
----
-
-## Demo
-
-See `DEMO_SCRIPT.md` for a 2-3 minute walkthrough script.

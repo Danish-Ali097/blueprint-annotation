@@ -26,10 +26,12 @@ import {
 import { useCanvasStore } from "@/stores/canvas-store";
 import type { BlueprintFile, Point } from "@/types/canvas";
 
-const STAGE_WIDTH = 1120;
-const STAGE_HEIGHT = 680;
-const RIGHT_COLUMN_WIDTH = STAGE_WIDTH + 32;
+const DEFAULT_STAGE_WIDTH = 1120;
+const MIN_STAGE_WIDTH = 560;
+const DEFAULT_STAGE_HEIGHT = 680;
+const MIN_STAGE_HEIGHT = 380;
 const EMPTY_ANNOTATION_IDS: string[] = [];
+const CALIBRATION_UNITS = ["mm", "cm", "m", "in", "ft", "yd"] as const;
 
 type UploadedPage = {
   pageNumber: number;
@@ -146,6 +148,8 @@ export default function Home() {
   const [recentFiles, setRecentFiles] = useState<BlueprintFile[]>([]);
   const [isLoadingRecentFiles, setIsLoadingRecentFiles] = useState(false);
   const [cursorPosition, setCursorPosition] = useState<CursorPosition | null>(null);
+  const [stageWidth, setStageWidth] = useState(DEFAULT_STAGE_WIDTH);
+  const [stageHeight, setStageHeight] = useState(DEFAULT_STAGE_HEIGHT);
 
   const pages = useCanvasStore((state) => state.pages);
   const activePageId = useCanvasStore((state) => state.activePageId);
@@ -173,15 +177,23 @@ export default function Home() {
     () => pages.find((page) => page.id === activePageId) ?? null,
     [pages, activePageId],
   );
+  const calibrationUnitOptions = useMemo(() => {
+    if (!calibrationUnit) {
+      return [...CALIBRATION_UNITS];
+    }
+    return CALIBRATION_UNITS.includes(calibrationUnit as (typeof CALIBRATION_UNITS)[number])
+      ? [...CALIBRATION_UNITS]
+      : [...CALIBRATION_UNITS, calibrationUnit];
+  }, [calibrationUnit]);
 
   const fitStageToPage = useCallback(
     (pageWidth: number, pageHeight: number) => {
-      const scale = Math.min(STAGE_WIDTH / pageWidth, STAGE_HEIGHT / pageHeight, 1);
-      const x = (STAGE_WIDTH - pageWidth * scale) / 2;
-      const y = (STAGE_HEIGHT - pageHeight * scale) / 2;
+      const scale = Math.min(stageWidth / pageWidth, stageHeight / pageHeight, 1);
+      const x = (stageWidth - pageWidth * scale) / 2;
+      const y = (stageHeight - pageHeight * scale) / 2;
       setTransform({ x, y, scale });
     },
-    [setTransform],
+    [setTransform, stageWidth, stageHeight],
   );
 
   const loadPageAnnotations = useCallback(
@@ -289,8 +301,38 @@ export default function Home() {
   }, [activePage]);
 
   useEffect(() => {
+    if (!activePage) {
+      return;
+    }
+    fitStageToPage(activePage.width, activePage.height);
+  }, [activePage, fitStageToPage, stageHeight, stageWidth]);
+
+  useEffect(() => {
     void loadRecentUploads();
   }, [loadRecentUploads]);
+
+  useEffect(() => {
+    const updateStageSize = () => {
+      const viewportWidth = window.innerWidth;
+      const isThreeColumnLayout = viewportWidth >= 1280;
+      if (!isThreeColumnLayout) {
+        setStageWidth(Math.min(DEFAULT_STAGE_WIDTH, Math.max(MIN_STAGE_WIDTH, viewportWidth - 48)));
+      } else {
+        const sideColumnsWidth = 320 * 2;
+        const horizontalGap = 16 * 2;
+        const pagePadding = 16 * 2;
+        const availableCenterWidth = viewportWidth - sideColumnsWidth - horizontalGap - pagePadding;
+        setStageWidth(Math.min(DEFAULT_STAGE_WIDTH, Math.max(MIN_STAGE_WIDTH, availableCenterWidth)));
+      }
+
+      const availableHeight = window.innerHeight - 210;
+      setStageHeight(Math.min(DEFAULT_STAGE_HEIGHT, Math.max(MIN_STAGE_HEIGHT, availableHeight)));
+    };
+
+    updateStageSize();
+    window.addEventListener("resize", updateStageSize);
+    return () => window.removeEventListener("resize", updateStageSize);
+  }, []);
 
   async function onUploadBlueprint(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -680,13 +722,13 @@ export default function Home() {
     toggleLineMode,
   ]);
 
-  async function handleDeleteSelected() {
-    if (!selectedAnnotationId || !activePageId) {
+  async function handleDeleteAnnotation(annotationId: string) {
+    if (!activePageId) {
       return;
     }
 
-    await deleteAnnotation(selectedAnnotationId);
-    removeAnnotationInStore(selectedAnnotationId, activePageId);
+    await deleteAnnotation(annotationId);
+    removeAnnotationInStore(annotationId, activePageId);
   }
 
   async function handleRename(annotationId: string, nextName: string) {
@@ -699,25 +741,32 @@ export default function Home() {
     await renameAnnotation(annotationId, trimmedName);
   }
 
-  const draftFlatPoints = draftPoints.flatMap((point) => [point.x, point.y]);
-  const areaDraftFlatPoints = areaDraftPoints.flatMap((point) => [point.x, point.y]);
   const calibrationDraftFlatPoints = calibrationDraftPoints.flatMap((point) => [point.x, point.y]);
+  const linePreviewPoints =
+    isDrawing && draftPoints.length > 0 && cursorPosition ? [...draftPoints, cursorPosition] : draftPoints;
+  const linePreviewFlatPoints = linePreviewPoints.flatMap((point) => [point.x, point.y]);
+  const areaPreviewPoints =
+    isDrawingArea && areaDraftPoints.length > 0 && cursorPosition
+      ? [...areaDraftPoints, cursorPosition]
+      : areaDraftPoints;
+  const areaPreviewFlatPoints = areaPreviewPoints.flatMap((point) => [point.x, point.y]);
   const savedCalibrationLine =
     activePageId && calibrationLineByPage[activePageId] ? calibrationLineByPage[activePageId] : null;
 
   return (
-    <main className="flex min-h-screen w-full gap-4 overflow-x-auto bg-zinc-50 p-4">
-      <Card className="w-[320px] shrink-0">
+    <main className="flex min-h-screen w-full flex-col gap-4 overflow-x-hidden bg-zinc-50 p-4 xl:h-screen xl:flex-row xl:overflow-hidden">
+      <Card className="w-full xl:h-[calc(100vh-2rem)] xl:w-[320px] xl:shrink-0 xl:overflow-hidden xl:flex xl:flex-col">
         <CardHeader>
           <CardTitle>Blueprint Controls</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
           <label className="flex flex-col gap-2 text-sm font-medium">
             Upload blueprint (image or PDF)
             <Input
               type="file"
               accept="image/png,image/jpeg,image/jpg,application/pdf,.pdf"
               onChange={onUploadBlueprint}
+              disabled={isSaving}
             />
           </label>
           {uploadError ? <p className="text-sm text-red-600">{uploadError}</p> : null}
@@ -782,7 +831,17 @@ export default function Home() {
                 placeholder="Known distance"
                 inputMode="decimal"
               />
-              <Input value={calibrationUnit} onChange={(event) => setCalibrationUnit(event.target.value)} />
+              <select
+                className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                value={calibrationUnit}
+                onChange={(event) => setCalibrationUnit(event.target.value)}
+              >
+                {calibrationUnitOptions.map((unit) => (
+                  <option key={unit} value={unit}>
+                    {unit}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="flex items-center gap-2">
               <Button
@@ -880,24 +939,9 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Selection</p>
-            {selectedAnnotationId ? (
-              <Button variant="destructive" size="sm" onClick={() => void handleDeleteSelected()}>
-                <Trash2 className="h-4 w-4" />
-                Delete annotation
-              </Button>
-            ) : (
-              <p className="text-sm text-zinc-500">No annotation selected.</p>
-            )}
-          </div>
-
           <div className="space-y-1 rounded-md bg-zinc-100 p-3 text-sm">
             <p>
               <span className="font-medium">File:</span> {activeFileId ?? "not uploaded"}
-            </p>
-            <p>
-              <span className="font-medium">Zoom:</span> {transform.scale.toFixed(2)}x
             </p>
             {activePage && (
               <p>
@@ -908,12 +952,13 @@ export default function Home() {
         </CardContent>
       </Card>
 
-      <div className="flex shrink-0 flex-col gap-4" style={{ width: RIGHT_COLUMN_WIDTH }}>
-        <Card className="flex-1 overflow-hidden">
+      <div className="min-w-0 w-full xl:flex-1">
+        <Card className="overflow-hidden xl:h-[calc(100vh-2rem)] xl:flex xl:flex-col">
           <CardHeader className="flex-row items-center justify-between space-y-0">
             <CardTitle className="text-sm">Canvas</CardTitle>
             <div className="flex items-center gap-2">
               {isSaving && <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />}
+              <Badge variant="outline">Zoom {transform.scale.toFixed(2)}x</Badge>
               {isSaving && pdfConversionProgress ? (
                 <Badge variant="secondary">
                   {pdfConversionProgress.total > 0
@@ -932,7 +977,7 @@ export default function Home() {
               )}
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="xl:min-h-0 xl:flex-1">
             <div className="relative overflow-auto rounded-md border border-zinc-200 bg-white">
               <div className="absolute right-2 top-2 z-10 rounded bg-black/70 px-2 py-1 text-xs font-medium text-white">
                 {cursorPosition
@@ -943,8 +988,8 @@ export default function Home() {
                 ref={(value) => {
                   stageRef.current = value;
                 }}
-                width={STAGE_WIDTH}
-                height={STAGE_HEIGHT}
+                width={stageWidth}
+                height={stageHeight}
                 draggable={!isDrawing && !isDrawingArea && !isCalibrating}
                 x={transform.x}
                 y={transform.y}
@@ -978,9 +1023,9 @@ export default function Home() {
                   {activePageAnnotationIds.map((annotationId) => (
                     <AnnotationShape key={annotationId} annotationId={annotationId} />
                   ))}
-                  {draftFlatPoints.length > 1 && (
+                  {linePreviewFlatPoints.length > 1 && (
                     <Line
-                      points={draftFlatPoints}
+                      points={linePreviewFlatPoints}
                       stroke="#0ea5e9"
                       strokeWidth={2}
                       lineCap="round"
@@ -988,16 +1033,16 @@ export default function Home() {
                       dash={[6, 4]}
                     />
                   )}
-                  {areaDraftPoints.length > 2 && (
+                  {areaPreviewFlatPoints.length > 1 && (
                     <Line
-                      points={areaDraftFlatPoints}
+                      points={areaPreviewFlatPoints}
                       stroke="#0f766e"
                       strokeWidth={2}
                       lineCap="round"
                       lineJoin="round"
                       dash={[6, 4]}
-                      closed
-                      fill="rgba(15, 118, 110, 0.14)"
+                      closed={areaDraftPoints.length >= 3}
+                      fill={areaDraftPoints.length >= 3 ? "rgba(15, 118, 110, 0.14)" : undefined}
                     />
                   )}
                   {calibrationDraftFlatPoints.length > 1 && (
@@ -1033,51 +1078,63 @@ export default function Home() {
             </div>
           </CardContent>
         </Card>
+      </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Annotations</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="max-h-64 space-y-2 overflow-auto">
-              {activePageAnnotationIds.map((annotationId) => {
-                const annotation = annotationsById[annotationId];
-                if (!annotation) {
-                  return null;
-                }
+      <Card className="w-full xl:h-[calc(100vh-2rem)] xl:w-[320px] xl:shrink-0 xl:overflow-hidden xl:flex xl:flex-col">
+        <CardHeader>
+          <CardTitle className="text-sm">Annotations</CardTitle>
+        </CardHeader>
+        <CardContent className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
+          <div className="space-y-2">
+            {activePageAnnotationIds.map((annotationId) => {
+              const annotation = annotationsById[annotationId];
+              if (!annotation) {
+                return null;
+              }
 
-                return (
-                  <div
-                    key={annotation.id}
-                    className={`rounded-md border p-3 ${
-                      selectedAnnotationId === annotation.id ? "border-blue-500 bg-blue-50" : "border-zinc-200"
-                    }`}
-                    onClick={() => setSelectedAnnotationId(annotation.id)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        setSelectedAnnotationId(annotation.id);
-                      }
-                    }}
-                  >
+              return (
+                <div
+                  key={annotation.id}
+                  className={`rounded-md border p-3 ${
+                    selectedAnnotationId === annotation.id ? "border-blue-500 bg-blue-50" : "border-zinc-200"
+                  }`}
+                  onClick={() => setSelectedAnnotationId(annotation.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      setSelectedAnnotationId(annotation.id);
+                    }
+                  }}
+                >
+                  <div className="flex items-center gap-2">
                     <Input
                       defaultValue={annotation.name}
                       onBlur={(event) => void handleRename(annotation.id, event.target.value)}
                     />
-                    <p className="mt-2 text-sm text-zinc-600">
-                      {annotation.measurement.toFixed(2)} {annotation.unit}
-                    </p>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDeleteAnnotation(annotation.id);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
-                );
-              })}
-              {activePageAnnotationIds.length === 0 && (
-                <p className="text-sm text-zinc-500">No annotations yet for this page.</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+                  <p className="mt-2 text-sm text-zinc-600">
+                    {annotation.measurement.toFixed(2)} {annotation.unit}
+                  </p>
+                </div>
+              );
+            })}
+            {activePageAnnotationIds.length === 0 && (
+              <p className="text-sm text-zinc-500">No annotations yet for this page.</p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </main>
   );
 }
