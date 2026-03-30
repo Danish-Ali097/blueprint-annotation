@@ -6,6 +6,7 @@ const { loadEnvConfig } = nextEnv;
 loadEnvConfig(process.cwd());
 
 const envSchema = z.object({
+  NODE_ENV: z.enum(["development", "production", "test"]),
   DATABASE_URL: z
     .string()
     .min(1, "DATABASE_URL is required")
