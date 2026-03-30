@@ -15,6 +15,7 @@ import {
   createAnnotation,
   createFile,
   deleteAnnotation,
+  getUploadConversionStatus,
   listFiles as listRecentFiles,
   listAnnotations,
   listPages,
@@ -23,30 +24,18 @@ import {
   upsertPage,
 } from "@/lib/api";
 import { useCanvasStore } from "@/stores/canvas-store";
-import type { BlueprintFile, BlueprintPage, Point } from "@/types/canvas";
+import type { BlueprintFile, Point } from "@/types/canvas";
 
 const STAGE_WIDTH = 1120;
 const STAGE_HEIGHT = 680;
 const RIGHT_COLUMN_WIDTH = STAGE_WIDTH + 32;
 const EMPTY_ANNOTATION_IDS: string[] = [];
-const PDF_WORKER_CDN = "https://unpkg.com/pdfjs-dist@5.5.207/legacy/build/pdf.worker.min.mjs";
 
 type UploadedPage = {
   pageNumber: number;
   width: number;
   height: number;
   src: string;
-};
-
-type UploadedPdfPageMetadata = {
-  pageNumber: number;
-  width: number;
-  height: number;
-};
-
-type UploadedPdfMetadata = {
-  pdfData: ArrayBuffer;
-  pages: UploadedPdfPageMetadata[];
 };
 
 type CalibrationLine = {
@@ -58,6 +47,11 @@ type CalibrationLine = {
 type CursorPosition = {
   x: number;
   y: number;
+};
+
+type PdfConversionProgress = {
+  current: number;
+  total: number;
 };
 
 function isPdfAsset(name: string, mimeType?: string) {
@@ -129,69 +123,8 @@ async function extractImagePage(file: File): Promise<UploadedPage> {
   };
 }
 
-async function extractPdfMetadata(file: File): Promise<UploadedPdfMetadata> {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  pdfjs.GlobalWorkerOptions.workerSrc = PDF_WORKER_CDN;
-
-  const rawPdfData = await file.arrayBuffer();
-  const metadataPdfData = rawPdfData.slice(0);
-  const cachedPdfData = rawPdfData.slice(0);
-  const pdf = await pdfjs.getDocument({ data: metadataPdfData }).promise;
-  const pages: UploadedPdfPageMetadata[] = [];
-
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const viewport = page.getViewport({ scale: 1 });
-
-    pages.push({
-      pageNumber,
-      width: Math.floor(viewport.width),
-      height: Math.floor(viewport.height),
-    });
-  }
-
-  return { pdfData: cachedPdfData, pages };
-}
-
-async function renderPdfPageToImage(pdfData: ArrayBuffer, pageNumber: number): Promise<string> {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  pdfjs.GlobalWorkerOptions.workerSrc = PDF_WORKER_CDN;
-
-  // pdf.js can transfer ownership of ArrayBuffer internals; use a fresh copy per render.
-  const renderData = pdfData.slice(0);
-  const pdf = await pdfjs.getDocument({ data: renderData }).promise;
-  const page = await pdf.getPage(pageNumber);
-  const viewport = page.getViewport({ scale: 1 });
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.floor(viewport.width);
-  canvas.height = Math.floor(viewport.height);
-  const context = canvas.getContext("2d");
-
-  if (!context) {
-    throw new Error("Unable to initialize canvas context for PDF page rendering");
-  }
-
-  await page.render({ canvas, canvasContext: context, viewport, intent: "display" }).promise;
-
-  const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((result) => {
-      if (!result) {
-        reject(new Error("Failed to serialize rendered PDF page to image"));
-        return;
-      }
-      resolve(result);
-    }, "image/png");
-  });
-
-  return URL.createObjectURL(blob);
-}
-
 export default function Home() {
   const stageRef = useRef<Konva.Stage | null>(null);
-  const imageSrcByPageRef = useRef<Record<string, string>>({});
-  const pdfDataByFileIdRef = useRef<Record<string, ArrayBuffer>>({});
-  const renderingPageImageRef = useRef<Set<string>>(new Set());
-  const failedPageImageRef = useRef<Set<string>>(new Set());
   const [imageElement, setImageElement] = useState<HTMLImageElement | null>(null);
   const [imageSrcByPage, setImageSrcByPage] = useState<Record<string, string>>({});
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
@@ -209,10 +142,9 @@ export default function Home() {
     {},
   );
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [pdfConversionProgress, setPdfConversionProgress] = useState<PdfConversionProgress | null>(null);
   const [recentFiles, setRecentFiles] = useState<BlueprintFile[]>([]);
   const [isLoadingRecentFiles, setIsLoadingRecentFiles] = useState(false);
-  const [pdfDataByFileId, setPdfDataByFileId] = useState<Record<string, ArrayBuffer>>({});
-  const [isRenderingPageImageById, setIsRenderingPageImageById] = useState<Record<string, boolean>>({});
   const [cursorPosition, setCursorPosition] = useState<CursorPosition | null>(null);
 
   const pages = useCanvasStore((state) => state.pages);
@@ -241,10 +173,6 @@ export default function Home() {
     () => pages.find((page) => page.id === activePageId) ?? null,
     [pages, activePageId],
   );
-
-  const isRenderingActivePageImage = activePageId
-    ? Boolean(isRenderingPageImageById[activePageId])
-    : false;
 
   const fitStageToPage = useCallback(
     (pageWidth: number, pageHeight: number) => {
@@ -279,51 +207,32 @@ export default function Home() {
     }
   }, []);
 
-  const ensurePageImage = useCallback(
-    async (page: BlueprintPage, fileId: string) => {
-      if (imageSrcByPageRef.current[page.id]) {
-        return;
+  const waitForPdfConversion = useCallback(async (jobId: string): Promise<UploadedPage[]> => {
+    const pollIntervalMs = 450;
+
+    while (true) {
+      const status = await getUploadConversionStatus(jobId);
+      setPdfConversionProgress({
+        current: status.convertedPages,
+        total: status.totalPages,
+      });
+
+      if (status.status === "failed") {
+        throw new Error(status.error ?? "Failed to convert PDF");
       }
 
-      if (failedPageImageRef.current.has(page.id) || renderingPageImageRef.current.has(page.id)) {
-        return;
+      if (status.status === "done") {
+        return status.pages.map((page) => ({
+          pageNumber: page.pageNumber,
+          width: page.width,
+          height: page.height,
+          src: page.path,
+        }));
       }
 
-      const pdfData = pdfDataByFileIdRef.current[fileId];
-      if (!pdfData) {
-        return;
-      }
-
-      renderingPageImageRef.current.add(page.id);
-      setIsRenderingPageImageById((state) => ({ ...state, [page.id]: true }));
-      try {
-        const imageSrc = await renderPdfPageToImage(pdfData, page.pageNumber);
-        setImageSrcByPage((state) => {
-          if (state[page.id]) {
-            URL.revokeObjectURL(imageSrc);
-            return state;
-          }
-
-          return { ...state, [page.id]: imageSrc };
-        });
-      } catch (error) {
-        failedPageImageRef.current.add(page.id);
-        setUploadError(error instanceof Error ? error.message : "Failed to render PDF page");
-      } finally {
-        renderingPageImageRef.current.delete(page.id);
-        setIsRenderingPageImageById((state) => ({ ...state, [page.id]: false }));
-      }
-    },
-    [],
-  );
-
-  useEffect(() => {
-    imageSrcByPageRef.current = imageSrcByPage;
-  }, [imageSrcByPage]);
-
-  useEffect(() => {
-    pdfDataByFileIdRef.current = pdfDataByFileId;
-  }, [pdfDataByFileId]);
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+  }, []);
 
   useEffect(() => {
     if (!activePageId) {
@@ -353,16 +262,6 @@ export default function Home() {
 
     void loadPageAnnotations(activePageId);
   }, [activePageId, loadPageAnnotations]);
-
-  useEffect(() => {
-    if (!activePage || !activeFileId) {
-      return;
-    }
-
-    if (!imageSrcByPage[activePage.id]) {
-      void ensurePageImage(activePage, activeFileId);
-    }
-  }, [activeFileId, activePage, ensurePageImage, imageSrcByPage]);
 
   useEffect(() => {
     if (!activePage) {
@@ -400,28 +299,28 @@ export default function Home() {
     }
 
     setUploadError(null);
-    failedPageImageRef.current.clear();
-    renderingPageImageRef.current.clear();
+    setPdfConversionProgress(null);
     setIsSaving(true);
     try {
       const uploadedAsset = await uploadAsset(file);
       const isPdf = isPdfAsset(uploadedAsset.name, uploadedAsset.mimeType);
-      const uploadedPages = isPdf
-        ? []
+      if (isPdf && !uploadedAsset.conversionJobId) {
+        throw new Error("PDF conversion job was not created");
+      }
+      const uploadedPages: UploadedPage[] = isPdf
+        ? uploadedAsset.conversionJobId
+          ? await waitForPdfConversion(uploadedAsset.conversionJobId)
+          : []
         : [
             {
               ...(await extractImagePage(file)),
               src: uploadedAsset.path,
             },
           ];
-      const pdfMetadata = isPdf ? await extractPdfMetadata(file) : null;
-      const pageDefinitions = pdfMetadata
-        ? pdfMetadata.pages
-        : uploadedPages.map((uploadedPage) => ({
-            pageNumber: uploadedPage.pageNumber,
-            width: uploadedPage.width,
-            height: uploadedPage.height,
-          }));
+
+      if (uploadedPages.length === 0) {
+        throw new Error("No pages were produced from this upload");
+      }
 
       const savedFile = await createFile({
         name: uploadedAsset.name,
@@ -429,13 +328,13 @@ export default function Home() {
       });
       setActiveFileId(savedFile.id);
 
-      for (const pageDefinition of pageDefinitions) {
+      for (const uploadedPage of uploadedPages) {
         await upsertPage({
           fileId: savedFile.id,
-          pageNumber: pageDefinition.pageNumber,
-          width: pageDefinition.width,
-          height: pageDefinition.height,
-          previewPath: `local-preview://${file.name}-page-${pageDefinition.pageNumber}`,
+          pageNumber: uploadedPage.pageNumber,
+          width: uploadedPage.width,
+          height: uploadedPage.height,
+          previewPath: uploadedPage.src,
         });
       }
 
@@ -447,9 +346,6 @@ export default function Home() {
 
       setPages(dbPages);
       setActivePageId(firstPage?.id ?? null);
-      if (pdfMetadata) {
-        setPdfDataByFileId((state) => ({ ...state, [savedFile.id]: pdfMetadata.pdfData }));
-      }
       setImageSrcByPage((state) => ({
         ...state,
         ...Object.fromEntries(
@@ -458,10 +354,6 @@ export default function Home() {
             .map((page) => [page.id, uploadedSrcByPageNumber[page.pageNumber]]),
         ),
       }));
-      if (pdfMetadata && firstPage) {
-        const firstPageImage = await renderPdfPageToImage(pdfMetadata.pdfData, firstPage.pageNumber);
-        setImageSrcByPage((state) => ({ ...state, [firstPage.id]: firstPageImage }));
-      }
       if (firstPage) {
         fitStageToPage(firstPage.width, firstPage.height);
       } else {
@@ -477,14 +369,13 @@ export default function Home() {
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "Failed to process uploaded file");
     } finally {
+      setPdfConversionProgress(null);
       setIsSaving(false);
     }
   }
 
   async function loadFileFromRecentUpload(file: BlueprintFile) {
     setUploadError(null);
-    failedPageImageRef.current.clear();
-    renderingPageImageRef.current.clear();
     setActiveFileId(file.id);
     const dbPages = await listPages(file.id);
     setPages(dbPages);
@@ -506,32 +397,10 @@ export default function Home() {
       return;
     }
 
-    const isPdf = isPdfAsset(file.name);
-
-    if (!isPdf) {
-      setImageSrcByPage((state) => ({
-        ...state,
-        ...Object.fromEntries(dbPages.map((page) => [page.id, file.path])),
-      }));
-      return;
-    }
-
-    try {
-      const response = await fetch(file.path);
-      if (!response.ok) {
-        throw new Error(`Failed to load stored PDF (${response.status})`);
-      }
-
-      const pdfData = await response.arrayBuffer();
-      setPdfDataByFileId((state) => ({ ...state, [file.id]: pdfData }));
-
-      if (firstPage) {
-        const firstPageImage = await renderPdfPageToImage(pdfData, firstPage.pageNumber);
-        setImageSrcByPage((state) => ({ ...state, [firstPage.id]: firstPageImage }));
-      }
-    } catch (error) {
-      setUploadError(error instanceof Error ? error.message : "Failed to open stored PDF");
-    }
+    setImageSrcByPage((state) => ({
+      ...state,
+      ...Object.fromEntries(dbPages.map((page) => [page.id, page.previewPath ?? file.path])),
+    }));
   }
 
   function handleStageWheel(event: Konva.KonvaEventObject<WheelEvent>) {
@@ -1045,13 +914,17 @@ export default function Home() {
             <CardTitle className="text-sm">Canvas</CardTitle>
             <div className="flex items-center gap-2">
               {isSaving && <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />}
-              {!activePageId ? (
+              {isSaving && pdfConversionProgress ? (
+                <Badge variant="secondary">
+                  {pdfConversionProgress.total > 0
+                    ? `Converting ${pdfConversionProgress.current} of ${pdfConversionProgress.total} pages...`
+                    : "Preparing PDF conversion..."}
+                </Badge>
+              ) : !activePageId ? (
                 <Badge variant="secondary">
                   <Upload className="mr-1 h-3 w-3" />
                   Upload to start
                 </Badge>
-              ) : isRenderingActivePageImage ? (
-                <Badge variant="secondary">Rendering page image...</Badge>
               ) : isLoadingAnnotations ? (
                 <Badge variant="secondary">Loading annotations...</Badge>
               ) : (

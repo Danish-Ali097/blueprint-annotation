@@ -10,6 +10,27 @@ type UploadedAsset = {
   name: string;
   path: string;
   mimeType: string;
+  conversionJobId?: string;
+  pages?: Array<{
+    pageNumber: number;
+    width: number;
+    height: number;
+    path: string;
+  }>;
+};
+
+type UploadConversionStatus = {
+  id: string;
+  status: "queued" | "running" | "done" | "failed";
+  totalPages: number;
+  convertedPages: number;
+  pages: Array<{
+    pageNumber: number;
+    width: number;
+    height: number;
+    path: string;
+  }>;
+  error: string | null;
 };
 
 async function parseJson<T>(response: Response): Promise<ApiResponse<T>> {
@@ -41,6 +62,12 @@ export async function uploadAsset(file: File) {
   });
 
   const data = await parseJson<UploadedAsset>(response);
+  return data.data;
+}
+
+export async function getUploadConversionStatus(jobId: string) {
+  const response = await fetch(`/api/uploads?jobId=${encodeURIComponent(jobId)}`);
+  const data = await parseJson<UploadConversionStatus>(response);
   return data.data;
 }
 
